@@ -1,0 +1,46 @@
+{
+  "name": "uow-courseloop-mcp",
+  "version": "1.1.0",
+  "description": "MCP server for the University of Wollongong CourseLoop handbook (courses.uow.edu.au)",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "uow",
+    "university-of-wollongong",
+    "courseloop",
+    "handbook"
+  ],
+  "author": "James Young",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "crawl": "npm run build && node scripts/crawl-766.mjs",
+    "lint": "biome lint"
+  },
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4"
+  },
+  "bin": {
+    "uow-courseloop-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
