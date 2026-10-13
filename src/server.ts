@@ -24,6 +24,24 @@ const offeringFilter = {
   offering: z.string().optional().describe('Exact offering name, e.g. "Wollongong-Autumn-On-Campus"'),
 };
 
+const oneOrMany = (desc: string) => z.union([z.string(), z.array(z.string())]).optional().describe(desc);
+
+/** Search-page facets (see list_search_filters for the allowed values). */
+const searchFilters = {
+  session: oneOrMany('Subjects: session, e.g. "Autumn", "Spring", "Summer", "Trimester 1"'),
+  campus: oneOrMany('Campus, e.g. "Wollongong", "Liverpool", "Dubai", "UOW Online"'),
+  delivery: oneOrMany('Delivery mode: "On-Campus", "Online", "Mixed Mode", "Flexible", "Distance"'),
+  level: oneOrMany('Subjects: subject level, e.g. "100", "200", "300", "Honours"'),
+  faculty: oneOrMany('Faculty or school, e.g. "School of Computing and Information Technology"'),
+  study_area: oneOrMany('Study area, e.g. "Computer Science and Information Technology", "Business"'),
+  schedule: oneOrMany('Subjects / majors: schedule, e.g. "Computing and Information Technology", "General Schedule"'),
+  award_type: oneOrMany('"Undergraduate", "Postgraduate" or "Not Applicable"'),
+  course_type: oneOrMany('Courses: e.g. "Bachelor Degree", "Masters Degree (Coursework)", "Graduate Certificate"'),
+};
+
+const listify = (f: Record<string, string | string[] | undefined>) =>
+  Object.fromEntries(Object.entries(f).flatMap(([k, v]) => (v === undefined ? [] : [[k, Array.isArray(v) ? v : [v]]])));
+
 function ok(data: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -91,16 +109,66 @@ export function createServer(handbook = new Handbook()): McpServer {
     {
       title: "Search UOW handbook",
       description:
-        `Search the University of Wollongong course handbook (courses.uow.edu.au) for courses, subjects, majors and minors by name or code (e.g. "766", "Bachelor of Computer Science", "CSIT110", "cyber security"). ${YEAR_NOTE}`,
+        `Search the University of Wollongong course handbook (courses.uow.edu.au) for courses, subjects, majors and minors by name or code (e.g. "766", "Bachelor of Computer Science", "CSIT110", "cyber security"). ` +
+        "Set type and the filters to use the handbook's faceted search (like the Subjects / Courses / Majors tabs on courses.uow.edu.au/search): e.g. all 300-level Autumn subjects at Wollongong from the School of Computing and Information Technology. " +
+        "Filters take labels, not ids; each takes one value or a list (ORed). Different filters are ANDed, but campus and session are matched independently (a subject offered in Autumn at Dubai and Spring at Wollongong matches campus=Wollongong + session=Autumn); use find_subjects when they must hold for the same offering. " +
+        `Call list_search_filters for every allowed value. Page with offset/next_offset. ${YEAR_NOTE}`,
       inputSchema: {
-        query: z.string().min(1).describe("Name, code or keywords"),
-        type: z.enum(["all", "course", "subject", "major", "minor"]).optional().describe("Filter by item type (default all)"),
+        query: z.string().optional().describe("Name, code or keywords. May be empty when filters are given."),
+        type: z
+          .enum(["all", "course", "subject", "major", "minor"])
+          .optional()
+          .describe("Item type (default all). Filters need a type; if omitted with filters, subjects are searched."),
         year,
         limit: z.number().int().min(1).max(100).optional().describe("Max results (default 20)"),
+        offset: z.number().int().min(0).optional().describe("Skip this many results (use next_offset from the previous page)"),
+        ...searchFilters,
       },
       annotations: readOnly,
     },
-    ({ query, type, year, limit }) => run(() => handbook.search(query, { type, year, limit })),
+    ({ query, type, year, limit, offset, ...filters }) =>
+      run(() => handbook.search(query ?? "", { type, year, limit, offset, filters: listify(filters) })),
+  );
+
+  server.registerTool(
+    "list_search_filters",
+    {
+      title: "List search filters",
+      description:
+        "List every filter of the handbook's search page and its allowed values, per item type (subject, course, aos = majors/minors): sessions, campuses, delivery modes, subject levels, faculties and schools, study areas, schedules, award types and course types. Values are read live from courses.uow.edu.au/search.",
+      inputSchema: {},
+      annotations: readOnly,
+    },
+    () => run(() => handbook.listFilters()),
+  );
+
+  server.registerTool(
+    "find_subjects",
+    {
+      title: "Find subjects",
+      description:
+        'Find subjects that fit a study plan, e.g. "a Cyber Security major subject in the Bachelor of Computer Science that I haven\'t taken, running in Autumn at Wollongong, with no group project". ' +
+        "Candidates come from a major/minor (area_of_study, looked up inside the course when course is given), else from a course's structure, else from the faceted search (query + session/campus/delivery/level). " +
+        "Each candidate is then checked against its real offerings, so session, campus and delivery must all hold for the same offering. Optionally drops completed subjects, checks each matching offering's assessments for group work or a final exam, and checks prerequisites against completed subjects. " +
+        `Returns matches with their qualifying offerings and assessments, plus ruled_out with the reason for each. This fetches several pages per subject, so expect 10-60 s; keep max_candidates small. Assessment data is the handbook's, so ask the user to confirm in the subject outline. ${YEAR_NOTE}`,
+      inputSchema: {
+        area_of_study: z.string().optional().describe('Major or minor code or name, e.g. "Cyber Security" or "MAJ40516"'),
+        course: z.string().optional().describe('Course code or name, e.g. "766" or "Bachelor of Computer Science"; disambiguates area_of_study'),
+        query: z.string().optional().describe("Keywords; narrows the candidates by title/code, or is the search text when no area_of_study/course is given"),
+        year,
+        session: z.string().optional().describe('Session, e.g. "Autumn", "Spring", "Summer", "Trimester 1"'),
+        campus: z.string().optional().describe('Campus, e.g. "Wollongong", "Liverpool", "UOW Online"'),
+        delivery: z.string().optional().describe('Delivery mode, e.g. "On-Campus", "Online"'),
+        level: z.array(z.number().int()).optional().describe("Subject levels to keep, e.g. [200, 300]"),
+        completed: codes("Subjects already completed (excluded from results, and used for check_eligibility)").optional(),
+        exclude_group_work: z.boolean().optional().describe("Drop offerings with any Group assessment"),
+        exclude_final_exam: z.boolean().optional().describe("Drop offerings with an exam (anything typed or named Exam that is not mid-session)"),
+        check_eligibility: z.boolean().optional().describe("Check prerequisites against completed (default false)"),
+        max_candidates: z.number().int().min(1).max(100).optional().describe("Max subjects to check in detail (default 30)"),
+      },
+      annotations: readOnly,
+    },
+    ({ level, ...rest }) => run(() => handbook.findSubjects({ ...rest, levels: level })),
   );
 
   server.registerTool(

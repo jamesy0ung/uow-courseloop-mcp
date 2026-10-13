@@ -258,9 +258,9 @@ function enrolmentRules(rules: any[] | undefined) {
     .filter((r) => r.rule);
 }
 
-/** "CSIT214" -> 200; undefined when the code has no level digit. */
+/** "CSIT214" -> 200, "MIR 903" -> 900; undefined when the code has no level digit. */
 export function subjectLevel(code: string): number | undefined {
-  const m = code.match(/^[A-Za-z]+(\d)\d\d/);
+  const m = code.match(/^[A-Za-z]+ ?(\d)\d\d/);
   return m ? Number(m[1]) * 100 : undefined;
 }
 
@@ -355,6 +355,20 @@ export function matchOfferings(offerings: Offering[], f: OfferingFilter): Offeri
       test(o.campus, f.campus) &&
       test(o.delivery, f.delivery),
   );
+}
+
+/**
+ * Substring matching lets "Wollongong" also match "UOW Online Wollongong"; when some offerings
+ * match a field exactly, keep only those.
+ */
+export function preferExact(offerings: Offering[], f: OfferingFilter): Offering[] {
+  let out = offerings;
+  for (const key of ["session", "campus", "delivery"] as const) {
+    if (!f[key]) continue;
+    const exact = out.filter((o) => norm(o[key]) === norm(f[key]));
+    if (exact.length) out = exact;
+  }
+  return out;
 }
 
 // ---------- assessments ----------

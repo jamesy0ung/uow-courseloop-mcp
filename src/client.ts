@@ -8,7 +8,7 @@ export interface FetchResult {
   status: number;
   body: string;
 }
-export type Fetcher = (url: string) => Promise<FetchResult>;
+export type Fetcher = (url: string, init?: { method: "POST"; body: string }) => Promise<FetchResult>;
 
 export class NotFoundError extends Error {}
 export class RateLimitedError extends Error {}
@@ -24,17 +24,32 @@ export interface SearchHit {
   isSuspendedOrDiscontinued?: string;
 }
 
+/** One facet of the handbook's search page, e.g. {filterField: "teachingPeriod", filterValue: ["autumn"]}. */
+export interface SearchFilter {
+  filterField: string;
+  filterValue: string[];
+  isExactMatch: boolean;
+}
+
+export type ContentType = "course" | "subject" | "aos";
+
 export interface Page {
   url: string;
   content: any;
 }
 
-const defaultFetcher: Fetcher = async (url) => {
+const defaultFetcher: Fetcher = async (url, init) => {
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, {
-        headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/json" },
+        method: init?.method ?? "GET",
+        body: init?.body,
+        headers: {
+          "User-Agent": USER_AGENT,
+          Accept: "text/html,application/json",
+          ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        },
         signal: AbortSignal.timeout(20_000),
       });
       if (res.status >= 500 && attempt === 0) {
@@ -110,12 +125,16 @@ export class HandbookClient {
     );
   }
 
-  /** Cached, throttled GET with in-flight de-duplication. Errors and blocked responses are not cached. */
-  private get(url: string): Promise<FetchResult> {
+  /**
+   * Cached, throttled GET (or POST when a body is given) with in-flight de-duplication.
+   * Errors and blocked responses are not cached.
+   */
+  private get(url: string, body?: string): Promise<FetchResult> {
+    const key = body ? `${url}\n${body}` : url;
     const now = Date.now();
-    const hit = this.cache.get(url);
+    const hit = this.cache.get(key);
     if (hit && hit.expires > now) return hit.value;
-    const value = this.throttle.run(() => this.fetcher(url)).then((r) => {
+    const value = this.throttle.run(() => this.fetcher(url, body ? { method: "POST", body } : undefined)).then((r) => {
       if (r.status === 403 || r.status === 429) {
         throw new RateLimitedError(
           `courses.uow.edu.au refused the request (HTTP ${r.status}); its CloudFront firewall rate-limits bursts of requests. Wait a few minutes and try again.`,
@@ -123,12 +142,12 @@ export class HandbookClient {
       }
       return r;
     });
-    this.cache.set(url, { expires: now + this.ttlMs, value });
+    this.cache.set(key, { expires: now + this.ttlMs, value });
     value.then(
       (r) => {
-        if (r.status >= 500) this.cache.delete(url);
+        if (r.status >= 500) this.cache.delete(key);
       },
-      () => this.cache.delete(url),
+      () => this.cache.delete(key),
     );
     return value;
   }
@@ -150,9 +169,9 @@ export class HandbookClient {
     return { url: this.pageUrl(kind, year, code, offering), content };
   }
 
-  async search(query: string, year: number | "current", size = 20): Promise<{ total: number; results: SearchHit[] }> {
+  async search(query: string, year: number | "current", size = 20, from = 0): Promise<{ total: number; results: SearchHit[] }> {
     const url = new URL(`${BASE_URL}/api/search/search-all`);
-    url.searchParams.set("from", "0");
+    url.searchParams.set("from", String(from));
     url.searchParams.set("query", query);
     url.searchParams.set("searchType", "advanced");
     url.searchParams.set("siteId", SITE_ID);
@@ -162,6 +181,37 @@ export class HandbookClient {
     if (res.status !== 200) throw new Error(`Search failed: HTTP ${res.status}`);
     const data = JSON.parse(res.body)?.data ?? {};
     return { total: data.total ?? 0, results: data.results ?? [] };
+  }
+
+  /** The faceted search behind the site's Courses / Majors / Subjects tabs. size is capped at 100 by the API. */
+  async searchItems(opts: {
+    query: string;
+    contenttype: ContentType;
+    filters: SearchFilter[];
+    from?: number;
+    size?: number;
+  }): Promise<{ total: number; results: SearchHit[] }> {
+    const body = JSON.stringify({
+      siteId: SITE_ID,
+      query: opts.query,
+      contenttype: opts.contenttype,
+      searchFilters: opts.filters,
+      from: opts.from ?? 0,
+      size: Math.min(opts.size ?? 20, 100),
+    });
+    const res = await this.get(`${BASE_URL}/api/search/search-academic-items`, body);
+    if (res.status !== 200) throw new Error(`Search failed: HTTP ${res.status} ${res.body.slice(0, 200)}`);
+    const data = JSON.parse(res.body)?.data ?? {};
+    return { total: data.total ?? 0, results: data.results ?? [] };
+  }
+
+  /** The search page's filter configuration (field names and the allowed values for each facet). */
+  async searchConfig(): Promise<any> {
+    const res = await this.get(`${BASE_URL}/search`);
+    if (res.status !== 200) throw new Error(`HTTP ${res.status} fetching the search page`);
+    const config = extractNextData(res.body)?.props?.pageProps?.pageConfig?.[0]?.sections?.search?.[0];
+    if (!config?.sub_modules) throw new Error("The search page has no filter configuration; the site layout may have changed");
+    return config;
   }
 }
 

@@ -9,7 +9,9 @@ Eventually the goal is so I can ask my agent something like "find me some nice e
 ## Tools
 | Tool | Example |
 |---|---|
-| `search_handbook` | `{query: "Bachelor of Computer Science", type: "course"}` |
+| `search_handbook` | `{query: "Bachelor of Computer Science", type: "course"}` or `{type: "subject", session: "Autumn", campus: "Wollongong", level: "300"}` |
+| `list_search_filters` | `{}` (every session, campus, level, faculty, study area, schedule… the search accepts) |
+| `find_subjects` | `{course: "766", area_of_study: "Cyber Security", session: "Autumn", campus: "Wollongong", completed: ["CSCI262"], exclude_group_work: true}` |
 | `get_course` | `{identifier: "766"}` |
 | `get_area_of_study` | `{identifier: "Cyber Security"}` |
 | `get_subject` | `{identifier: "CSIT110", year: 2025}` |
@@ -20,6 +22,8 @@ Eventually the goal is so I can ask my agent something like "find me some nice e
 - `year` defaults to the current year from the system clock. Years before 2021 are not available (server-side limitation of courses.uow.edu.au).
 - When a request matches several offerings, the user gets a pick-list (MCP elicitation). Clients without elicitation get `needs_selection: true` plus the options instead.
 - Assessments differ between offerings, so `get_subject_assessments` always works on a single selected offering.
+- `search_handbook` filters are the same facets as the Courses / Majors and Minors / Subjects tabs on https://courses.uow.edu.au/search (`POST /api/search/search-academic-items`). They take labels, which are mapped to the site's ids using the search page's live filter config. Campus and session are matched independently there, so `find_subjects` re-checks candidates against each subject's real offerings.
+- `find_subjects` takes candidates from a major/minor (found within the course if one is given), a course structure, or the faceted search. It then keeps subjects with an offering matching session × campus × delivery, and can drop offerings with group work or an exam and check prerequisites against `completed`. Each rejected subject comes back in `ruled_out` with the reason.
 - Requests are throttled to about 80/min, because otherwise this triggers CloudFront's rate limit.
 
 ## Setup

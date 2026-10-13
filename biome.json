@@ -7,7 +7,7 @@
 	"linter": { "enabled": true, "rules": { "preset": "recommended" } },
 	"overrides": [
 		{
-			"includes": ["src/parse.ts", "src/client.ts", "src/handbook.ts"],
+			"includes": ["src/parse.ts", "src/client.ts", "src/handbook.ts", "src/filters.ts"],
 			"linter": { "rules": { "suspicious": { "noExplicitAny": "off" } } }
 		},
 		{

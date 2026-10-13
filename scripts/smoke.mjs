@@ -10,6 +10,10 @@ console.log("tools:", tools.map((t) => t.name).join(", "));
 const calls = [
   ["search_handbook", { query: "766" }],
   ["search_handbook", { query: "Bachelor of Computer Science", type: "course", limit: 3 }],
+  ["search_handbook", { type: "subject", session: "Autumn", campus: "Wollongong", level: "300", faculty: "School of Computing and Information Technology", limit: 5 }],
+  ["search_handbook", { query: "computer", type: "minor" }],
+  ["list_search_filters", {}],
+  ["find_subjects", { course: "766", area_of_study: "Cyber Security", session: "Autumn", campus: "Wollongong", completed: ["CSCI262"], exclude_group_work: true }],
   ["get_course", { identifier: "Bachelor of Computer Science", include_structure: false }],
   ["get_course", { identifier: "766", year: 2026 }],
   ["get_area_of_study", { identifier: "Cyber Security" }],
